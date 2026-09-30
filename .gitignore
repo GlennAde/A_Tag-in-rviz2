@@ -8,3 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
+
+# uv 缓存（本机 ~/.cache 只读，故重定向到工作区内）
+.uv-cache
+
+# 临时产物
+.scratch/
