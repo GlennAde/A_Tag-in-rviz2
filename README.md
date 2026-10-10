@@ -1,193 +1,57 @@
-# a_tag
+# A_tag 工作空间
 
-用一块**共面四 AprilTag 标定板**估计相机相对板的 6DoF 位姿。
+colcon 工作空间，装两件事：
 
-主输出是 `T_board_cam` —— **相机在板坐标系下的位姿**（x, y, z, roll, pitch, yaw）。
-
-## 坐标系约定
-
-板坐标系（board frame）：
-
-| 轴 | 方向 |
+| 包 | 说明 |
 |---|---|
-| 原点 | 板面中心 |
-| X | 板面内向右 |
-| Y | 板面内向上 |
-| Z | 垂直板面向外，指向观察者（相机） |
+| `src/a_tag` | 用共面四 AprilTag 标定板估计相机 6DoF 位姿（Python，`ament_python`）。文档见 [src/a_tag/README.md](src/a_tag/README.md) |
+| `src/rm_vision_ros2_hik_camera` | 海康 USB3 工业相机 ROS 2 驱动（C++，包名 `hik_camera`），通过 MVS SDK 取流并发布 `/image_raw` + `/camera_info` |
 
-板面即 **Z = 0** 平面，四个 tag 的 16 个角点 3D 坐标都落在这个平面上。
+A_tag 默认订阅相机驱动发布的 `/image_raw` + `/camera_info`，把「**板在相机坐标系下的位姿**」
+发到 `/a_tag/pose`（`frame_id = camera_optical_frame`），同时用同一份数据广播 TF
+（`camera_optical_frame -> tag_board`，`publish_tf:=false` 可关）。相机是参考系、板是被观测物，
+所以 RViz 里 Fixed Frame 用相机就能看到板在动。
 
-变换记号：`T_a_b` 表示把 b 坐标系的点变换到 a 坐标系，即 `X_a = T_a_b @ X_b`。
-
-- `T_cam_board`：PnP 的直接结果，板 → 相机
-- `T_board_cam`：**主输出**，等于 `T_cam_board` 的逆
-
-欧拉角约定为 ZYX 内旋：`R = Rz(yaw) @ Ry(pitch) @ Rx(roll)`，
-在 `pitch = ±90°` 处存在万向锁。**内部一律以 SE(3) 为准，只在输出时转欧拉角。**
-
-### 为什么正对板时 roll 读到约 ±180°
-
-**这是正常的，不是 bug。** 板坐标系的 Z 指向观察者，而相机看向板时其光学 Z
-指向板，两者朝向相反，所以姿态里必然含一个约 180° 的转动。相机正对板时：
-
-| 角度 | 读数 | 含义 |
-|---|---|---|
-| roll | ≈ ±180° | 相机在看着板 |
-| pitch | ≈ 0° | 离垂直的倾角 |
-| yaw | 面内转角 | 相机绕板法线的转动 |
-
-这里**刻意**不用机体系（X 前 / Y 左 / Z 上）。实测机体系下正对板时
-`pitch = 89.99°`，正好落在万向锁上，roll 与 yaw 不可分离、读数乱跳。
-光学系下三个角是良态可分的。
-
-如果确实需要机体系对接 ROS，用 `to_camera_body()` 转换，
-但请以 4×4 矩阵继续传递，不要再转欧拉角。
-
-## 安装
+## 构建
 
 ```bash
-uv sync
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install                       # 全工作空间
+colcon build --packages-select a_tag --symlink-install   # 只编 A_tag
+source install/setup.bash
 ```
 
-## 快速开始
-
-命令行：
+## 跑起来
 
 ```bash
-uv run a-tag --config config.yaml              # 摄像头实时预览
-uv run a-tag --source board.png --no-preview   # 单张图片
-uv run a-tag --source video.mp4 --save-video out.mp4
+# 终端 1: 相机出图（需要海康相机 + MVS SDK）
+ros2 launch hik_camera hik_camera.launch.py
+
+# 终端 2: 位姿估计
+ros2 launch a_tag a_tag.launch.py
+ros2 topic echo /a_tag/pose
+ros2 run tf2_ros tf2_echo camera_optical_frame tag_board   # 同一份位姿的 TF
+
+# 终端 3: 链路自检（图像 -> 内参 -> 位姿 -> TF 逐跳查，断在哪跳会告诉你）
+ros2 run a_tag a-tag-check
 ```
 
-作为库：
-
-```python
-from a_tag import AppConfig, AprilTagDetector, solve_board_pose
-
-cfg = AppConfig.load("config.yaml")
-det = AprilTagDetector(expected_ids=cfg.board.tag_ids)
-
-corners = det.detect(gray)                     # {tag_id: (4,2) 角点}
-result = solve_board_pose(corners, cfg.board,
-                          cfg.camera_matrix, cfg.dist_coeffs)
-
-if result.ok:
-    print(result.pose())                       # 相机在板系下的 x,y,z,rpy
-    print(result.distance, result.reproj_rmse_px)
-else:
-    print("无效:", result.reason)
-```
-
-## 配置
-
-`board` 段必须填**真实尺寸**，否则位姿会整体缩放或偏斜。见
-`src/a_tag/default_config.yaml`。
-
-```yaml
-board:
-  tag_size: 0.04          # tag 黑框边长，米（不含外侧白边）
-  tag_centers:            # 各 tag 中心在板坐标系下的 [x, y]，米
-    0: [-0.15, -0.10]
-    1: [ 0.15, -0.10]
-    2: [ 0.15,  0.10]
-    3: [-0.15,  0.10]
-```
-
-## 实测精度
-
-4cm tag、34×24cm 板、fx=1000、1280×720。误差主导项是**角点定位精度**，
-不是求解器。
-
-| 距离 | tag 像素 | 角度误差 | 位置误差 |
-|---|---|---|---|
-| 0.4 m | 105 px | 0.02° | 0.1 mm |
-| 0.8 m | 51 px | 0.01° | 0.4 mm |
-| 1.2 m | 34 px | 0.17° | 4.2 mm |
-| 2.0 m | 20 px | 1.10° | 38 mm |
-
-**相机位置误差 ≈ 距离 × 旋转误差**，所以离得越远位置精度掉得越快。
-建议让 tag 在图像里保持 **≥ 50px**。
-
-可见 tag 数对精度的影响（0.8m）：
-
-| 可见 tag | 角度误差 |
-|---|---|
-| 4 | 0.17° |
-| 3 | 0.24° |
-| 2 | 0.56° |
-| 1 | 1.82° |
-
-所以 `min_tags` 默认取 2，别降到 1。
-
-## 几个必须知道的坑
-
-### 1. 角点顺序
-
-`pupil_apriltags` 的 tag 坐标系是 **X 朝左 / Y 朝上 / Z 背离相机**
-（其自带 `pose_R = diag(-1,-1,1)`）。在本库的板坐标系下：
-
-| `corners[i]` | 图像中位置 | 板坐标系 |
-|---|---|---|
-| `[0]` | 右上 | (+X, +Y) |
-| `[1]` | 左上 | (-X, +Y) |
-| `[2]` | 左下 | (-X, -Y) |
-| `[3]` | 右下 | (+X, -Y) |
-
-该顺序**锁在 tag 自身的物理角上**，把 tag 在图像中旋转 90/180/270° 不会换序。
-
-顺序写错会让位姿镜像翻转，且重投影误差从 <0.5px 暴涨到十几个 px。
-这条由 `tests/test_board.py` 钉死。
-
-### 2. 平面 PnP 在正对相机时是病态的
-
-实测（4 tag，0.3px 角点噪声，300 次）：
-
-| 求解器 | 正对相机 | 倾斜 20° |
-|---|---|---|
-| IPPE | 0.801° | 0.156° |
-| IPPE + refineLM | 0.179° | — |
-| **SQPNP** | **0.178°** | **0.122°** |
-
-IPPE 单独用会朝「正对」方向产生系统性偏差。本库默认 `SOLVEPNP_SQPNP`
-（全局解、无需初值）再跟 `solvePnPRefineLM`。
-
-**弱自由度是 Z / pitch / roll**，X / Y / yaw 一向稳定。
-
-### 3. 正对板时 roll 约 ±180°
-
-见上文「为什么正对板时 roll 读到约 ±180°」。别把它当成标定错误去"修"。
-
-### 4. 用重投影误差当健康指标
-
-正常应 **< 0.5px**。持续超标说明 tag_size、相机内参或角点顺序有问题。
-超过 `max_reproj_px` 时 `result.ok` 为 `False`。
-
-### 5. 检测降采样
-
-libapriltag 的 `quad_decimate` 默认是 2.0，会先把图像降采样一半再找四边形，
-角点精度大约减半。本库默认设为 **1.0**。
-
-## 测试
-
-本机装了 ROS 2，其 pytest 插件在加载期会因缺 `lark` 报错，需要禁用插件自动加载：
+想在 RViz 里看板的三维位姿（板框 + tag 方框随板移动）：
 
 ```bash
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest
+ros2 launch a_tag a_tag.launch.py publish_markers:=true
+rviz2 -d "$(ros2 pkg prefix a_tag)/share/a_tag/config/a_tag.rviz"   # 配好的，Fixed Frame=相机
 ```
 
-测试用 `cv2.aruco` 渲染**真实 tag36h11 图案**做端到端校验（`tests/synthetic.py`），
-真值位姿已知，无需相机。
+没接相机时，可以用图片/视频跑命令行验证整条链路：
 
-## 模块
+```bash
+# 命令行只做「图片/视频 -> 打印位姿」，不看窗口、不存视频（内参归相机包，要显式指）
+ros2 run a_tag a-tag --camera-info src/rm_vision_ros2_hik_camera/config \
+    --source .scratch/board.png
+```
 
-| 文件 | 职责 |
-|---|---|
-| `se3.py` | SE(3) / 欧拉角 / 四元数工具 |
-| `board.py` | 板定义与 `CORNER_SIGNS`（角点顺序） |
-| `detector.py` | AprilTag 检测封装 |
-| `pose.py` | PnP 求解、重投影健康检查、求逆 |
-| `filter.py` | one-euro 平移滤波 + 四元数 slerp 旋转滤波 |
-| `camera.py` | 采集封装 |
-| `config.py` | YAML 配置 |
-| `viz.py` | 叠加显示 |
-| `app.py` | 命令行主循环 |
+## 目录约定
+
+包内一律 `config/` + `launch/` + 源码目录 + `package.xml`，与 `hik_camera` 保持一致；
+A_tag 的源码目录是 `a_tag/a_tag/`（Python 包必须同名嵌套，不能像 C++ 那样放 `src/`）。

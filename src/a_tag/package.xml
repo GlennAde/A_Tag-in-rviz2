@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>a_tag</name>
+  <version>0.1.0</version>
+  <description>用共面四 AprilTag 标定板估计相机相对板的 6DoF 位姿</description>
+  <maintainer email="1519623572@qq.com">GlennAde</maintainer>
+  <license>TODO: License declaration</license>
+
+  <!-- 运行时依赖。pip 侧的 pupil-apriltags 不在 rosdep 里，见 README「依赖与前置条件」 -->
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>camera_calibration</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

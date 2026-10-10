@@ -1,0 +1,24 @@
+# board 段来自 bag 自标定（含内参优化）
+board:
+  tag_size: 0.0385
+  tag_centers:
+    4:
+    - -0.04282
+    - 0.04907
+    6:
+    - -0.04284
+    - -0.04928
+    14:
+    - 0.04086
+    - 0.05076
+    22:
+    - 0.0448
+    - -0.05056
+tracking:
+  detector: aruco
+  families: tag16h5
+  nthreads: 2
+  quad_decimate: 1.0
+  min_tags: 2
+  max_reproj_px: 2.5   # 实测：这块板 4tag 帧 reproj p50=1.05 p90=1.53 p95=1.98，
+                       # 门槛 1.7 会拒掉 7.4%（每秒 7 次小卡顿）；2.5 只拒 4.0%（真模糊帧）

@@ -1,16 +1,26 @@
-# Python-generated files
+# colcon 构建产物
+build/
+install/
+log/
+
+# Python
 __pycache__/
 *.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+*.egg-info/
+.pytest_cache/
 
-# Virtual environments
-.venv
+# 本地环境与依赖
+.venv/
+.deps/
+.uv-cache/
 
-# uv 缓存（本机 ~/.cache 只读，故重定向到工作区内）
-.uv-cache
-
-# 临时产物
+# 临时产物与打包
 .scratch/
+dist/
+*.egg
+
+# 编辑器与系统文件（推荐添加）
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

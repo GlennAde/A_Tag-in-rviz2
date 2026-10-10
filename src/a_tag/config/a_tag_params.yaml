@@ -1,0 +1,67 @@
+# ROS 2 节点参数（config/a_tag_params.yaml），由 launch/a_tag.launch.py 加载。
+#
+# 只放「节点怎么跑」的参数。目标（板定义 + 求解参数）在 target.yaml；
+# 相机内参不在这里 —— 内参归相机驱动包所有，节点订阅 <camera_info_topic> 拿。
+
+/a_tag:
+  ros__parameters:
+    image_topic: /image_raw          # 订阅的图像话题
+    camera_info_topic: /camera_info  # 订阅的内参话题（相机驱动发布）
+    pose_topic: /a_tag/pose          # 发布: 板在相机坐标系下的位姿 (PoseStamped)
+
+    # 工业相机高帧率必须用 sensor-data QoS(best-effort)，用 reliable 会积压、延迟越跑越大
+    use_sensor_data_qos: true
+    # 图像订阅队列深度。1 = 只留最新帧（默认）：相机比处理快时丢掉旧帧，
+    # 位姿永远是"刚到的这一帧"算的，延迟上界 = 一个相机周期；
+    # 调大会在卡一下之后先补算几帧旧的，位姿会"晚一拍"。
+    image_queue_depth: 1
+
+    board_frame_id: tag_board        # 板的坐标系名（TF 的 child，树上的叶子）
+
+    # TF 广播：<camera_frame_id> -> <board_frame_id>（相机当父、板挂在它下面），
+    # 和 PoseStamped 是同一个位姿（板在相机系）。
+    # 相机当父系就不用管机器人自己那棵树（base_link -> ... -> 相机），板是本包独有的叶子；
+    # RViz 的 Fixed Frame 填 camera_frame_id（或 base_link）就能看到板在动。
+    # camera_frame_id 要和相机驱动发布的图像 frame_id 一致。
+    # ⚠️ 同一个 frame 只允许一个父系：board_frame_id 是本包独有的，正常不会冲突。
+    publish_tf: true
+    camera_frame_id: camera_optical_frame
+    config_dir: ""                   # 留空 = 用 share/a_tag/config（只放 target.yaml）
+    camera_info_file: ""             # 可选: 直接指定 camera_info.yaml；留空=只用话题
+
+    min_tags: 0                      # 0 = 用 target.yaml 里的值
+    max_reproj_px: 0.0               # 0 = 用 target.yaml 里的值
+    use_filter: true                 # one-euro 平移 + 四元数 slerp 旋转滤波
+    print_every: 30                  # 每 N 帧打一条日志，0 = 静默
+
+    # ---- 可视化（默认关）----
+    # 打开后把「检测框 + 板框投影 + 日志文字」叠加成图像发出来，用
+    #   ros2 run rqt_image_view rqt_image_view     （选 /a_tag/debug_image）
+    # 或 RViz 的 Image display 看
+    # 这个是**每帧读**的，所以运行时也能开关（不用重启节点）：
+    #   ros2 param set /a_tag publish_debug_image true
+    #   ros2 param set /a_tag publish_debug_image false
+    publish_debug_image: false
+    debug_image_topic: /a_tag/debug_image
+    # debug 图最短间隔（秒）。1440x1080 bgr8 一帧就 4.6MB，不发就没事，发就得限速：
+    #   0.2 = 5Hz（默认，看得清又不占带宽）   0 = 每帧都发（很占带宽，别在 60fps 下用）
+    # 画图和发布在独立线程里做（见 ros_node._on_debug_timer），所以慢订阅者（rqt）
+    # 只会堵住 debug 图，不会把位姿链路拖慢。运行中可调：ros2 param set /a_tag debug_period 0.5
+    debug_period: 0.2
+    # 观看端跟不上时（reliable 发布会堵）自动把间隔拉到"发一帧耗时的 3 倍"，最多 5 秒一次，
+    # 免得 debug 图把位姿链路一起拖慢。想固定速率就设 false。
+    debug_adaptive: true
+    # debug 图缩放：0.5 = 边长发一半（带宽/渲染量降到 1/4，文字小一半但仍可读）。
+    # 想看 60fps 的流畅视频就这么配：debug_period: 0 + debug_scale: 0.5
+    debug_scale: 1.0
+
+    # ---- RViz 三维示意（默认关）----
+    # 把板外框 + 四个 tag 方框 + 板坐标系箭头画成 MarkerArray 发出来，这样 RViz 里
+    # 不只有两个坐标系三脚架，还能看到"板"这个物体（贴在板坐标系上，静止不动）。
+    # 开法：publish_markers:=true，然后 RViz: Fixed Frame 填 tag_board，Add -> By topic -> Marker
+    # 是 latched（TRANSIENT_LOCAL），后开 RViz 也收得到；运行中可 ros2 param set 打开。
+    publish_markers: false
+    marker_topic: /a_tag/board_markers
+    # 发 debug 图的 QoS。默认 reliable —— rqt_image_view / showimage 默认按 reliable 订，
+    # 用 best-effort 发它们收不到。想省带宽再打开这个。
+    debug_use_sensor_data_qos: false
